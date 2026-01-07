@@ -1,0 +1,608 @@
+================================================================================
+P1GYM PROJECT - COMPLETE UPDATED CODE FILES
+================================================================================
+New Base URL: http://172.16.140.10/ug23ubc507/benito
+================================================================================
+
+
+================================================================================
+FILE: config.php (CREATE THIS FILE - REQUIRED)
+================================================================================
+<?php
+// Base URL Configuration
+define('BASE_URL', 'http://172.16.140.10/ug23ubc507/benito/');
+define('BASE_PATH', '/ug23ubc507/benito/');
+
+// Database Configuration
+$servername = "localhost";
+$username = "root";
+$password = "";
+$dbname = "p1gym";
+
+// Create connection
+$conn = new mysqli($servername, $username, $password, $dbname);
+
+// Check connection
+if ($conn->connect_error) {
+    die("Connection failed: " . $conn->connect_error);
+}
+
+// Set charset
+$conn->set_charset("utf8");
+?>
+
+
+================================================================================
+FILE: login.php
+================================================================================
+<?php
+session_start();
+include 'config.php';
+
+// Check if already logged in
+if(isset($_SESSION['user_id'])) {
+    header("Location: http://172.16.140.10/ug23ubc507/benito/dashboard.php");
+    exit();
+}
+
+$error = "";
+
+if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    $username = mysqli_real_escape_string($conn, $_POST['username']);
+    $password = $_POST['password'];
+    
+    $sql = "SELECT * FROM users WHERE username = '$username'";
+    $result = $conn->query($sql);
+    
+    if ($result->num_rows > 0) {
+        $row = $result->fetch_assoc();
+        if (password_verify($password, $row['password'])) {
+            $_SESSION['user_id'] = $row['id'];
+            $_SESSION['username'] = $row['username'];
+            $_SESSION['role'] = $row['role'];
+            header("Location: http://172.16.140.10/ug23ubc507/benito/dashboard.php");
+            exit();
+        } else {
+            $error = "Invalid password!";
+        }
+    } else {
+        $error = "User not found!";
+    }
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - P1 Gym</title>
+    <link href="http://172.16.140.10/ug23ubc507/benito/css/style.css" rel="stylesheet">
+    <link href="http://172.16.140.10/ug23ubc507/benito/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <div class="login-form">
+            <h2>P1 Gym Login</h2>
+            <?php if($error): ?>
+                <div class="alert alert-danger"><?php echo $error; ?></div>
+            <?php endif; ?>
+            <form action="http://172.16.140.10/ug23ubc507/benito/login.php" method="POST">
+                <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" name="username" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" name="password" class="form-control" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Login</button>
+            </form>
+            <p>Don't have an account? <a href="http://172.16.140.10/ug23ubc507/benito/register.php">Register</a></p>
+        </div>
+    </div>
+    <script src="http://172.16.140.10/ug23ubc507/benito/js/jquery.min.js"></script>
+    <script src="http://172.16.140.10/ug23ubc507/benito/js/bootstrap.min.js"></script>
+</body>
+</html>
+
+
+================================================================================
+FILE: register.php
+================================================================================
+<?php
+session_start();
+include 'config.php';
+
+$error = "";
+$success = "";
+
+if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    $username = mysqli_real_escape_string($conn, $_POST['username']);
+    $email = mysqli_real_escape_string($conn, $_POST['email']);
+    $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
+    $phone = mysqli_real_escape_string($conn, $_POST['phone']);
+    
+    // Check if user exists
+    $check = "SELECT * FROM users WHERE username = '$username' OR email = '$email'";
+    $result = $conn->query($check);
+    
+    if ($result->num_rows > 0) {
+        $error = "Username or email already exists!";
+    } else {
+        $sql = "INSERT INTO users (username, email, password, phone, role) VALUES ('$username', '$email', '$password', '$phone', 'member')";
+        if ($conn->query($sql) === TRUE) {
+            $success = "Registration successful! Please login.";
+            header("refresh:2;url=http://172.16.140.10/ug23ubc507/benito/login.php");
+        } else {
+            $error = "Error: " . $conn->error;
+        }
+    }
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register - P1 Gym</title>
+    <link href="http://172.16.140.10/ug23ubc507/benito/css/style.css" rel="stylesheet">
+    <link href="http://172.16.140.10/ug23ubc507/benito/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <div class="register-form">
+            <h2>P1 Gym Registration</h2>
+            <?php if($error): ?>
+                <div class="alert alert-danger"><?php echo $error; ?></div>
+            <?php endif; ?>
+            <?php if($success): ?>
+                <div class="alert alert-success"><?php echo $success; ?></div>
+            <?php endif; ?>
+            <form action="http://172.16.140.10/ug23ubc507/benito/register.php" method="POST">
+                <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" name="username" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" name="email" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label>Phone</label>
+                    <input type="text" name="phone" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" name="password" class="form-control" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Register</button>
+            </form>
+            <p>Already have an account? <a href="http://172.16.140.10/ug23ubc507/benito/login.php">Login</a></p>
+        </div>
+    </div>
+</body>
+</html>
+
+
+================================================================================
+FILE: dashboard.php
+================================================================================
+<?php
+session_start();
+include 'config.php';
+
+// Check if logged in
+if(!isset($_SESSION['user_id'])) {
+    header("Location: http://172.16.140.10/ug23ubc507/benito/login.php");
+    exit();
+}
+
+$user_id = $_SESSION['user_id'];
+$username = $_SESSION['username'];
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - P1 Gym</title>
+    <link href="http://172.16.140.10/ug23ubc507/benito/css/style.css" rel="stylesheet">
+    <link href="http://172.16.140.10/ug23ubc507/benito/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <a class="navbar-brand" href="http://172.16.140.10/ug23ubc507/benito/dashboard.php">
+            <img src="http://172.16.140.10/ug23ubc507/benito/images/logo.png" alt="P1 Gym" height="40">
+            P1 Gym
+        </a>
+        <div class="navbar-nav ml-auto">
+            <a class="nav-link" href="http://172.16.140.10/ug23ubc507/benito/profile.php">Profile</a>
+            <a class="nav-link" href="http://172.16.140.10/ug23ubc507/benito/membership.php">Membership</a>
+            <a class="nav-link" href="http://172.16.140.10/ug23ubc507/benito/schedule.php">Schedule</a>
+            <a class="nav-link" href="http://172.16.140.10/ug23ubc507/benito/logout.php">Logout</a>
+        </div>
+    </nav>
+    
+    <div class="container mt-4">
+        <h1>Welcome, <?php echo htmlspecialchars($username); ?>!</h1>
+        <div class="row">
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-body">
+                        <h5>My Membership</h5>
+                        <a href="http://172.16.140.10/ug23ubc507/benito/membership.php" class="btn btn-primary">View Details</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-body">
+                        <h5>Class Schedule</h5>
+                        <a href="http://172.16.140.10/ug23ubc507/benito/schedule.php" class="btn btn-primary">View Schedule</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-body">
+                        <h5>My Profile</h5>
+                        <a href="http://172.16.140.10/ug23ubc507/benito/profile.php" class="btn btn-primary">Edit Profile</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="http://172.16.140.10/ug23ubc507/benito/js/jquery.min.js"></script>
+    <script src="http://172.16.140.10/ug23ubc507/benito/js/bootstrap.min.js"></script>
+</body>
+</html>
+
+
+================================================================================
+FILE: logout.php
+================================================================================
+<?php
+session_start();
+session_unset();
+session_destroy();
+header("Location: http://172.16.140.10/ug23ubc507/benito/login.php");
+exit();
+?>
+
+
+================================================================================
+FILE: profile.php
+================================================================================
+<?php
+session_start();
+include 'config.php';
+
+if(!isset($_SESSION['user_id'])) {
+    header("Location: http://172.16.140.10/ug23ubc507/benito/login.php");
+    exit();
+}
+
+$user_id = $_SESSION['user_id'];
+$sql = "SELECT * FROM users WHERE id = $user_id";
+$result = $conn->query($sql);
+$user = $result->fetch_assoc();
+
+$success = "";
+$error = "";
+
+if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    $email = mysqli_real_escape_string($conn, $_POST['email']);
+    $phone = mysqli_real_escape_string($conn, $_POST['phone']);
+    
+    $update = "UPDATE users SET email = '$email', phone = '$phone' WHERE id = $user_id";
+    if ($conn->query($update) === TRUE) {
+        $success = "Profile updated successfully!";
+        // Refresh user data
+        $result = $conn->query($sql);
+        $user = $result->fetch_assoc();
+    } else {
+        $error = "Error updating profile.";
+    }
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Profile - P1 Gym</title>
+    <link href="http://172.16.140.10/ug23ubc507/benito/css/style.css" rel="stylesheet">
+    <link href="http://172.16.140.10/ug23ubc507/benito/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <a class="navbar-brand" href="http://172.16.140.10/ug23ubc507/benito/dashboard.php">P1 Gym</a>
+        <div class="navbar-nav ml-auto">
+            <a class="nav-link" href="http://172.16.140.10/ug23ubc507/benito/dashboard.php">Dashboard</a>
+            <a class="nav-link" href="http://172.16.140.10/ug23ubc507/benito/logout.php">Logout</a>
+        </div>
+    </nav>
+    
+    <div class="container mt-4">
+        <h2>My Profile</h2>
+        <?php if($success): ?>
+            <div class="alert alert-success"><?php echo $success; ?></div>
+        <?php endif; ?>
+        <?php if($error): ?>
+            <div class="alert alert-danger"><?php echo $error; ?></div>
+        <?php endif; ?>
+        
+        <form action="http://172.16.140.10/ug23ubc507/benito/profile.php" method="POST">
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" class="form-control" value="<?php echo htmlspecialchars($user['username']); ?>" disabled>
+            </div>
+            <div class="form-group">
+                <label>Email</label>
+                <input type="email" name="email" class="form-control" value="<?php echo htmlspecialchars($user['email']); ?>" required>
+            </div>
+            <div class="form-group">
+                <label>Phone</label>
+                <input type="text" name="phone" class="form-control" value="<?php echo htmlspecialchars($user['phone']); ?>" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Update Profile</button>
+            <a href="http://172.16.140.10/ug23ubc507/benito/dashboard.php" class="btn btn-secondary">Back to Dashboard</a>
+        </form>
+    </div>
+</body>
+</html>
+
+
+================================================================================
+FILE: membership.php
+================================================================================
+<?php
+session_start();
+include 'config.php';
+
+if(!isset($_SESSION['user_id'])) {
+    header("Location: http://172.16.140.10/ug23ubc507/benito/login.php");
+    exit();
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Membership - P1 Gym</title>
+    <link href="http://172.16.140.10/ug23ubc507/benito/css/style.css" rel="stylesheet">
+    <link href="http://172.16.140.10/ug23ubc507/benito/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <a class="navbar-brand" href="http://172.16.140.10/ug23ubc507/benito/dashboard.php">P1 Gym</a>
+        <div class="navbar-nav ml-auto">
+            <a class="nav-link" href="http://172.16.140.10/ug23ubc507/benito/dashboard.php">Dashboard</a>
+            <a class="nav-link" href="http://172.16.140.10/ug23ubc507/benito/logout.php">Logout</a>
+        </div>
+    </nav>
+    
+    <div class="container mt-4">
+        <h2>Membership Plans</h2>
+        <div class="row">
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">Basic</div>
+                    <div class="card-body">
+                        <h3>$29/month</h3>
+                        <ul>
+                            <li>Gym Access</li>
+                            <li>Locker Room</li>
+                        </ul>
+                        <a href="http://172.16.140.10/ug23ubc507/benito/subscribe.php?plan=basic" class="btn btn-primary">Subscribe</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">Premium</div>
+                    <div class="card-body">
+                        <h3>$49/month</h3>
+                        <ul>
+                            <li>Gym Access</li>
+                            <li>Locker Room</li>
+                            <li>Group Classes</li>
+                        </ul>
+                        <a href="http://172.16.140.10/ug23ubc507/benito/subscribe.php?plan=premium" class="btn btn-primary">Subscribe</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">VIP</div>
+                    <div class="card-body">
+                        <h3>$79/month</h3>
+                        <ul>
+                            <li>Gym Access</li>
+                            <li>Locker Room</li>
+                            <li>Group Classes</li>
+                            <li>Personal Trainer</li>
+                        </ul>
+                        <a href="http://172.16.140.10/ug23ubc507/benito/subscribe.php?plan=vip" class="btn btn-primary">Subscribe</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+
+
+================================================================================
+FILE: schedule.php
+================================================================================
+<?php
+session_start();
+include 'config.php';
+
+if(!isset($_SESSION['user_id'])) {
+    header("Location: http://172.16.140.10/ug23ubc507/benito/login.php");
+    exit();
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Schedule - P1 Gym</title>
+    <link href="http://172.16.140.10/ug23ubc507/benito/css/style.css" rel="stylesheet">
+    <link href="http://172.16.140.10/ug23ubc507/benito/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <a class="navbar-brand" href="http://172.16.140.10/ug23ubc507/benito/dashboard.php">P1 Gym</a>
+        <div class="navbar-nav ml-auto">
+            <a class="nav-link" href="http://172.16.140.10/ug23ubc507/benito/dashboard.php">Dashboard</a>
+            <a class="nav-link" href="http://172.16.140.10/ug23ubc507/benito/logout.php">Logout</a>
+        </div>
+    </nav>
+    
+    <div class="container mt-4">
+        <h2>Class Schedule</h2>
+        <table class="table table-bordered">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Monday</th>
+                    <th>Tuesday</th>
+                    <th>Wednesday</th>
+                    <th>Thursday</th>
+                    <th>Friday</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>6:00 AM</td>
+                    <td>Yoga</td>
+                    <td>Cardio</td>
+                    <td>Yoga</td>
+                    <td>Cardio</td>
+                    <td>Yoga</td>
+                </tr>
+                <tr>
+                    <td>9:00 AM</td>
+                    <td>HIIT</td>
+                    <td>Strength</td>
+                    <td>HIIT</td>
+                    <td>Strength</td>
+                    <td>HIIT</td>
+                </tr>
+                <tr>
+                    <td>5:00 PM</td>
+                    <td>Zumba</td>
+                    <td>Boxing</td>
+                    <td>Zumba</td>
+                    <td>Boxing</td>
+                    <td>Zumba</td>
+                </tr>
+            </tbody>
+        </table>
+        <a href="http://172.16.140.10/ug23ubc507/benito/dashboard.php" class="btn btn-secondary">Back to Dashboard</a>
+    </div>
+</body>
+</html>
+
+
+================================================================================
+FILE: index.php
+================================================================================
+<?php
+header("Location: http://172.16.140.10/ug23ubc507/benito/login.php");
+exit();
+?>
+
+
+================================================================================
+FILE: database.sql (Import this to your MySQL database)
+================================================================================
+-- P1 Gym Database
+-- Run this SQL in phpMyAdmin or MySQL
+
+CREATE DATABASE IF NOT EXISTS p1gym;
+USE p1gym;
+
+-- Users Table
+CREATE TABLE IF NOT EXISTS users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    email VARCHAR(100) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL,
+    phone VARCHAR(20),
+    role ENUM('admin', 'member', 'trainer') DEFAULT 'member',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Memberships Table
+CREATE TABLE IF NOT EXISTS memberships (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT,
+    plan_type ENUM('basic', 'premium', 'vip') NOT NULL,
+    start_date DATE,
+    end_date DATE,
+    status ENUM('active', 'expired', 'cancelled') DEFAULT 'active',
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+-- Classes Table
+CREATE TABLE IF NOT EXISTS classes (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    trainer_id INT,
+    schedule_time TIME,
+    schedule_day VARCHAR(20),
+    FOREIGN KEY (trainer_id) REFERENCES users(id)
+);
+
+-- Insert default admin user (password: admin123)
+INSERT INTO users (username, email, password, role) VALUES 
+('admin', 'admin@p1gym.com', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'admin');
+
+
+================================================================================
+FILE: .htaccess (Optional - for clean URLs)
+================================================================================
+RewriteEngine On
+RewriteBase /ug23ubc507/benito/
+
+# Redirect to login if not authenticated
+# RewriteCond %{REQUEST_FILENAME} !-f
+# RewriteCond %{REQUEST_FILENAME} !-d
+# RewriteRule ^(.*)$ index.php/$1 [L]
+
+
+================================================================================
+FOLDER STRUCTURE
+================================================================================
+/ug23ubc507/benito/
+    ├── config.php
+    ├── index.php
+    ├── login.php
+    ├── register.php
+    ├── dashboard.php
+    ├── profile.php
+    ├── membership.php
+    ├── schedule.php
+    ├── logout.php
+    ├── database.sql
+    ├── .htaccess
+    ├── css/
+    │   ├── style.css
+    │   └── bootstrap.min.css
+    ├── js/
+    │   ├── jquery.min.js
+    │   └── bootstrap.min.js
+    └── images/
+        └── logo.png
+
+================================================================================
+END OF FILE
+================================================================================

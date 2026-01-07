@@ -1,0 +1,2160 @@
+attendance.php
+==============
+
+<?php
+session_start();
+require_once __DIR__ . '/db.php';
+
+// NOTE: attendance.php is publicly accessible — do not force redirect to login.php
+$mysqli = db_connect();
+// current user email if logged in
+$user_email = isset($_SESSION['user_email']) ? $_SESSION['user_email'] : 'Guest';
+
+$message = '';
+$message_type = '';
+
+// Handle check-in
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] == 'checkin') {
+  $member_id = $_POST['member_id'] ?? '';
+  $check_in_time = date('Y-m-d H:i:s');
+  if (!empty($member_id)) {
+    $stmt = $mysqli->prepare("INSERT INTO attendance (member_id, check_in_time) VALUES (?, ?)");
+    if ($stmt) {
+      $stmt->bind_param("is", $member_id, $check_in_time);
+      if ($stmt->execute()) {
+        $message = "Check-in recorded successfully!";
+        $message_type = "success";
+      } else {
+        $message = "Error: " . $stmt->error;
+        $message_type = "error";
+      }
+      $stmt->close();
+    } else {
+      $message = "DB error: " . $mysqli->error;
+      $message_type = "error";
+    }
+  }
+}
+
+// Handle check-out
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] == 'checkout') {
+  $attendance_id = $_POST['attendance_id'] ?? '';
+  $check_out_time = date('Y-m-d H:i:s');
+  if (!empty($attendance_id)) {
+    $stmt = $mysqli->prepare("UPDATE attendance SET check_out_time = ? WHERE id = ? AND check_out_time IS NULL");
+    if ($stmt) {
+      $stmt->bind_param("si", $check_out_time, $attendance_id);
+      if ($stmt->execute()) {
+        $message = "Check-out recorded successfully!";
+        $message_type = "success";
+      } else {
+        $message = "Error: " . $stmt->error;
+        $message_type = "error";
+      }
+      $stmt->close();
+    } else {
+      $message = "DB error: " . $mysqli->error;
+      $message_type = "error";
+    }
+  }
+}
+
+// Handle delete attendance
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] == 'delete') {
+  $attendance_id = $_POST['attendance_id'] ?? '';
+  if (!empty($attendance_id)) {
+    $stmt = $mysqli->prepare("DELETE FROM attendance WHERE id = ?");
+    if ($stmt) {
+      $stmt->bind_param('i', $attendance_id);
+      if ($stmt->execute()) {
+        $message = 'Attendance record deleted.';
+        $message_type = 'success';
+      } else {
+        $message = 'Error deleting record: ' . $stmt->error;
+        $message_type = 'error';
+      }
+      $stmt->close();
+    } else {
+      $message = 'DB error: ' . $mysqli->error;
+      $message_type = 'error';
+    }
+  }
+}
+
+// Fetch members for select
+$members = $mysqli->query("SELECT id, first_name, last_name, email FROM members WHERE status='Active' ORDER BY first_name");
+
+// Fetch today's attendance
+$today_attendance = $mysqli->query("SELECT a.*, m.first_name, m.last_name FROM attendance a JOIN members m ON a.member_id = m.id WHERE DATE(a.check_in_time) = CURDATE() ORDER BY a.check_in_time DESC");
+
+// Fetch history
+$history = $mysqli->query("SELECT a.*, m.first_name, m.last_name FROM attendance a JOIN members m ON a.member_id = m.id ORDER BY a.check_in_time DESC LIMIT 50");
+
+// Handle name search (GET)
+$search_results = null;
+if (!empty($_GET['search_name'])) {
+  $s = trim($_GET['search_name']);
+  $like = "%" . $s . "%";
+  $stmt = $mysqli->prepare("SELECT a.*, m.first_name, m.last_name FROM attendance a JOIN members m ON a.member_id = m.id WHERE m.first_name LIKE ? OR m.last_name LIKE ? OR CONCAT(m.first_name, ' ', m.last_name) LIKE ? ORDER BY a.check_in_time DESC LIMIT 200");
+  if ($stmt) {
+    $stmt->bind_param('sss', $like, $like, $like);
+    $stmt->execute();
+    $search_results = $stmt->get_result();
+    $stmt->close();
+  }
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Attendance Tracking - BENNY FITNESS</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .btn{background:var(--accent);border:none;color:#000;padding:8px 12px;border-radius:6px;cursor:pointer}
+    .btn-danger{background:#c0392b;color:#fff}
+    .btn-small{padding:6px 8px;font-size:0.9rem}
+    .message.success{background:#2e7d32;color:#fff;padding:10px;border-radius:6px}
+    .message.error{background:#d32f2f;color:#fff;padding:10px;border-radius:6px}
+    .data-table{width:100%;border-collapse:collapse}
+    .data-table th,.data-table td{padding:8px;border-bottom:1px solid rgba(255,255,255,0.06)}
+    .status-badge{padding:6px 8px;border-radius:6px;background:#f39c12;color:#000}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🏋️ Attendance Tracking</h1>
+    
+    </header>
+
+    <main>
+      <div class="page-header" style="display:flex;justify-content:space-between;align-items:center">
+        <h2>Attendance Tracking</h2>
+        <div style="display:flex;gap:10px;align-items:center">
+                    <span style="color:var(--accent)">Welcome, <?php echo htmlspecialchars($user_email); ?></span>
+          <a href="logout.php" class="btn btn-danger">Logout</a>
+        </div>
+      </div>
+
+      <?php if ($message): ?>
+        <div class="message <?php echo $message_type; ?>" style="margin:12px 0">
+          <?php echo htmlspecialchars($message); ?>
+        </div>
+      <?php endif; ?>
+
+      <div class="attendance-section">
+          <div class="card panel" style="padding:16px">
+              <h3>Mark Attendance</h3>
+              <form id="checkin-form" method="POST" action="attendance.php" class="attendance-form">
+                <input type="hidden" name="action" value="checkin">
+                <input type="hidden" name="member_id" id="member_id_hidden" value="">
+                <div class="form-group">
+                  <label for="member_input">Search Member *</label>
+                  <input list="members_list" id="member_input" name="member_input" placeholder="Type name or email" autocomplete="off" style="width:100%;padding:8px;border-radius:6px;background:#0b0b0b;color:var(--text);border:1px solid rgba(255,255,255,0.06)" required>
+                  <datalist id="members_list">
+                    <?php if ($members) { foreach($members as $m) {
+                      // output value as id||Name (email) so we can parse it on submit
+                      $val = (int)$m['id'] . '||' . htmlspecialchars($m['first_name'] . ' ' . $m['last_name'] . ' (' . $m['email'] . ')');
+                      echo "<option value='" . $val . "'>";
+                    }} ?>
+                  </datalist>
+                </div>
+                <button type="submit" class="btn">Check In</button>
+              </form>
+            </div>
+      </div>
+      
+      <!-- Search by member name -->
+      <div class="attendance-section" style="margin-top:18px">
+        <h3>Search Attendance by Name</h3>
+        <form method="GET" action="attendance.php" style="display:flex;gap:8px;align-items:center;max-width:640px;">
+          <input type="text" name="search_name" placeholder="Enter member name" value="<?php echo htmlspecialchars($_GET['search_name'] ?? ''); ?>" style="flex:1;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);background:#0b0b0b;color:var(--text)">
+          <button class="btn" type="submit">Search</button>
+          <a href="attendance.php" style="margin-left:8px;color:var(--muted)">Clear</a>
+        </form>
+
+        <?php if (isset($search_results)): ?>
+          <div style="margin-top:12px">
+              <?php if ($search_results && $search_results->num_rows > 0): ?>
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Member</th>
+                    <th>Check In</th>
+                    <th>Check Out</th>
+                        <th>Duration</th>
+                        <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                    <?php while($r = $search_results->fetch_assoc()):
+                  $start = date('Y-m-d', strtotime($r['check_in_time']));
+                  $in = date('H:i:s', strtotime($r['check_in_time']));
+                  $out = $r['check_out_time'] ? date('H:i:s', strtotime($r['check_out_time'])) : '';
+                  if ($r['check_out_time']) {
+                    $dur = strtotime($r['check_out_time']) - strtotime($r['check_in_time']);
+                    $h = floor($dur/3600);
+                    $m = floor(($dur%3600)/60);
+                    $dur_text = $h . 'h ' . $m . 'm';
+                  } else { $dur_text = '-'; }
+                ?>
+                                    <tr>
+                                        <td><?php echo htmlspecialchars($start); ?></td>
+                                        <td><?php echo htmlspecialchars($r['first_name'] . ' ' . $r['last_name']); ?></td>
+                                        <td><?php echo htmlspecialchars($in); ?></td>
+                                        <td><?php echo htmlspecialchars($out ?: 'Not checked out'); ?></td>
+                                        <td><?php echo htmlspecialchars($dur_text); ?></td>
+                                        <td>
+                                          <form method='POST' action='attendance.php' style='display:inline;' onsubmit="return confirm('Delete this attendance record?');">
+                                            <input type='hidden' name='action' value='delete'>
+                                            <input type='hidden' name='attendance_id' value='<?php echo (int)$r['id']; ?>'>
+                                            <button type='submit' class='btn btn-small' style='background:#d32f2f;color:#fff'>Delete</button>
+                                          </form>
+                                        </td>
+                                    </tr>
+                <?php endwhile; ?>
+                </tbody>
+              </table>
+            <?php else: ?>
+              <p class="small">No attendance records found for that name.</p>
+            <?php endif; ?>
+          </div>
+        <?php endif; ?>
+      </div>
+
+      <div class="attendance-section" style="margin-top:18px">
+        <h3>Today's Attendance</h3>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Member Name</th>
+                <th>Check In Time</th>
+                <th>Check Out Time</th>
+                <th>Duration</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php if ($today_attendance && $today_attendance->num_rows > 0) {
+                while($att = $today_attendance->fetch_assoc()) {
+              ?>
+                  <tr>
+                  <td><?php echo htmlspecialchars($att['first_name'] . ' ' . $att['last_name']); ?></td>
+                  <td><?php echo date('H:i:s', strtotime($att['check_in_time'])); ?></td>
+                  <?php if ($att['check_out_time']):
+                    $duration = strtotime($att['check_out_time']) - strtotime($att['check_in_time']);
+                    $hours = floor($duration / 3600);
+                    $minutes = floor(($duration % 3600) / 60);
+                  ?>
+                    <td><?php echo date('H:i:s', strtotime($att['check_out_time'])); ?></td>
+                    <td><?php echo $hours . 'h ' . $minutes . 'm'; ?></td>
+                    <td>-</td>
+                  <?php else: ?>
+                    <td><span class='status-badge status-pending'>Not Checked Out</span></td>
+                    <td>-</td>
+                    <td>
+                      <form method='POST' action='attendance.php' style='display:inline;'>
+                      <input type='hidden' name='action' value='checkout'>
+                      <input type='hidden' name='attendance_id' value='<?php echo (int)$att['id']; ?>'>
+                      <button type='submit' class='btn btn-small'>Check Out</button>
+                      </form>
+                      <form method='POST' action='attendance.php' style='display:inline;margin-left:6px' onsubmit="return confirm('Delete this attendance record?');">
+                      <input type='hidden' name='action' value='delete'>
+                      <input type='hidden' name='attendance_id' value='<?php echo (int)$att['id']; ?>'>
+                      <button type='submit' class='btn btn-small' style='background:#d32f2f;color:#fff'>Delete</button>
+                      </form>
+                    </td>
+                  <?php endif; ?>
+                  </tr>
+              <?php
+                }
+              } else {
+                echo "<tr><td colspan='5' class='text-center'>No attendance records for today.</td></tr>";
+              }
+              ?>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="attendance-section" style="margin-top:18px">
+        <h3>Attendance History</h3>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Member Name</th>
+                <th>Check In</th>
+                <th>Check Out</th>
+                <th>Duration</th>
+              </tr>
+            </thead>
+            <tbody>
+                            <?php
+                            if ($history && $history->num_rows > 0) {
+                                while($att = $history->fetch_assoc()) {
+                                    $duration = $att['check_out_time'] ? (strtotime($att['check_out_time']) - strtotime($att['check_in_time'])) : 0;
+                                    $hours = $duration ? floor($duration / 3600) : 0;
+                                    $minutes = $duration ? floor(($duration % 3600) / 60) : 0;
+                            ?>
+                                <tr>
+                                  <td><?php echo date('Y-m-d', strtotime($att['check_in_time'])); ?></td>
+                                  <td><?php echo htmlspecialchars($att['first_name'] . ' ' . $att['last_name']); ?></td>
+                                  <td><?php echo date('H:i:s', strtotime($att['check_in_time'])); ?></td>
+                                  <?php if ($att['check_out_time']): ?>
+                                    <td><?php echo date('H:i:s', strtotime($att['check_out_time'])); ?></td>
+                                    <td><?php echo $hours . 'h ' . $minutes . 'm'; ?></td>
+                                  <?php else: ?>
+                                    <td><span class='status-badge status-pending'>Not Checked Out</span></td>
+                                    <td>-</td>
+                                  <?php endif; ?>
+                                  <td>
+                                    <form method='POST' action='attendance.php' style='display:inline;' onsubmit="return confirm('Delete this attendance record?');">
+                                      <input type='hidden' name='action' value='delete'>
+                                      <input type='hidden' name='attendance_id' value='<?php echo (int)$att['id']; ?>'>
+                                      <button type='submit' class='btn btn-small' style='background:#d32f2f;color:#fff'>Delete</button>
+                                    </form>
+                                  </td>
+                                </tr>
+                            <?php
+                                }
+                            } else {
+                                echo "<tr><td colspan='6' class='text-center'>No attendance records found.</td></tr>";
+                            }
+                            ?>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script>
+    // parse member_input value like "id||Name (email)" into hidden member_id on submit
+    document.getElementById('checkin-form')?.addEventListener('submit', function(e){
+      var input = document.getElementById('member_input');
+      var hidden = document.getElementById('member_id_hidden');
+      if (!input || !hidden) return;
+      var v = input.value || '';
+      var id = '';
+      if (v.indexOf('||') !== -1) {
+        id = v.split('||')[0];
+      } else {
+        // try to match any option whose value endsWith the typed value
+        var list = document.getElementById('members_list');
+        if (list && list.options) {
+          for (var i=0;i<list.options.length;i++){
+            if (list.options[i].value.indexOf(v) !== -1) {
+              id = list.options[i].value.split('||')[0]; break;
+            }
+          }
+        }
+      }
+      hidden.value = id;
+      if (!id) {
+        e.preventDefault();
+        alert('Please select a valid member from the list.');
+      }
+    });
+  </script>
+</body>
+</html>
+------------------------------------------------------------------------------------------------------------------------
+
+contact.php
+-==========
+
+<?php
+?>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Contact Us - BENNY FITNESS</title>
+<link rel="stylesheet" href="styles.css">
+
+<style>
+:root {
+  --accent:#FFD700;
+  --dark:#0a0a0a;
+  --panel:#ffffff;
+  --muted:#666;
+}
+
+/* ===== BASE ===== */
+body {
+  background: linear-gradient(180deg,#0a0a0a,#1a1a1a);
+}
+
+/* ===== HERO ===== */
+.contact-hero {
+  max-width: 1200px;
+  margin: 50px auto 0;
+  background: linear-gradient(135deg,#ffffff,#f1f1f1);
+  border-radius: 22px;
+  overflow: hidden;
+  box-shadow: 0 30px 60px rgba(0,0,0,0.4);
+}
+
+.contact-hero img {
+  width: 100%;
+  height: 360px;
+  object-fit: cover;
+}
+
+.contact-hero-content {
+  padding: 50px;
+  color: #111;
+}
+
+.contact-hero-content h1 {
+  font-size: 38px;
+  margin-bottom: 15px;
+}
+
+.contact-hero-content p {
+  font-size: 17px;
+  color: #444;
+  line-height: 1.8;
+  max-width: 900px;
+}
+
+/* ===== INFO GRID ===== */
+.contact-info {
+  max-width: 1200px;
+  margin: 50px auto;
+  display: grid;
+  grid-template-columns: repeat(4,1fr);
+  gap: 25px;
+}
+
+.info-card {
+  background: var(--panel);
+  padding: 30px;
+  border-radius: 18px;
+  text-align: left;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.25);
+  position: relative;
+}
+
+.info-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 4px;
+  background: var(--accent);
+  border-radius: 18px 18px 0 0;
+}
+
+.info-card h4 {
+  font-size: 18px;
+  margin-bottom: 10px;
+  color: #111;
+}
+
+.info-card p {
+  font-size: 14px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.info-card a {
+  color: #000;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+/* ===== CTA ===== */
+.contact-cta {
+  max-width: 1200px;
+  margin: 40px auto 80px;
+  background: #000;
+  border-radius: 20px;
+  padding: 40px;
+  color: #fff;
+  text-align: center;
+  box-shadow: 0 25px 50px rgba(0,0,0,0.5);
+}
+
+.contact-cta h3 {
+  font-size: 26px;
+  margin-bottom: 10px;
+}
+
+.contact-cta p {
+  color: #ccc;
+  margin-bottom: 20px;
+}
+
+.contact-cta a {
+  display: inline-block;
+  padding: 12px 28px;
+  background: var(--accent);
+  color: #000;
+  font-weight: 700;
+  border-radius: 30px;
+  text-decoration: none;
+}
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 900px) {
+  .contact-info {
+    grid-template-columns: repeat(2,1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .contact-info {
+    grid-template-columns: 1fr;
+  }
+
+  .contact-hero-content {
+    padding: 30px;
+  }
+}
+</style>
+</head>
+
+<body>
+
+<?php include_once __DIR__ . '/header.php'; ?>
+
+<!-- ===== HERO SECTION ===== -->
+<section class="contact-hero">
+  <img src="images/contact.jpg" alt="Benny Fitness Trichy">
+
+  <div class="contact-hero-content">
+    <h1>Get in Touch with BENNY FITNESS</h1>
+    <p>
+      BENNY FITNESS is a professionally managed fitness center in Tiruchirappalli,
+      committed to helping individuals achieve strength, discipline, and long-term health.
+      Whether you are looking for membership details, personal training, or general guidance,
+      our team is ready to assist you.
+    </p>
+  </div>
+</section>
+
+<!-- ===== INFO CARDS ===== -->
+<section class="contact-info">
+
+  <div class="info-card">
+    <h4>📍 Location</h4>
+    <p>
+      BENNY FITNESS<br>
+      No. 25, 2nd Floor,<br>
+      Near Central Bus Stand,<br>
+      Tiruchirappalli – 620001
+    </p>
+  </div>
+
+  <div class="info-card">
+    <h4>📞 Phone</h4>
+    <p>+91 98765 43210</p>
+  </div>
+
+  <div class="info-card">
+    <h4>✉️ Email</h4>
+    <p>
+      <a href="mailto:info@bennyfitness.com">
+        info@bennyfitness.com
+      </a>
+    </p>
+  </div>
+
+  <div class="info-card">
+    <h4>⏰ Working Hours</h4>
+    <p>
+      Mon – Sat: 5:00 AM – 10:00 PM<br>
+      Sunday: 6:00 AM – 12:00 PM
+    </p>
+  </div>
+
+</section>
+
+<!-- ===== CTA ===== -->
+<section class="contact-cta">
+  <h3>Start Your Fitness Journey Today</h3>
+  <p>Visit our gym or contact us to get expert guidance and a personalized fitness plan.</p>
+  <a href="index.php">Back to Home</a>
+</section>
+
+</body>
+</html>
+-----------------------------------------------------------------------------------------------------------
+
+database.sql
+==============
+
+-- Gym Management System Database Schema
+
+CREATE DATABASE IF NOT EXISTS gym_management;
+USE gym_management;
+
+-- Membership Plans Table (must be created first due to foreign key)
+CREATE TABLE IF NOT EXISTS membership_plans (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    plan_name VARCHAR(100) NOT NULL,
+    duration_days INT NOT NULL,
+    price DECIMAL(10, 2) NOT NULL,
+    description TEXT,
+    status ENUM('Active', 'Inactive') DEFAULT 'Active',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Members Table
+CREATE TABLE IF NOT EXISTS members (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    first_name VARCHAR(50) NOT NULL,
+    last_name VARCHAR(50) NOT NULL,
+    email VARCHAR(100) UNIQUE NOT NULL,
+    phone VARCHAR(20) NOT NULL,
+    address TEXT,
+    date_of_birth DATE,
+    gender ENUM('Male', 'Female', 'Other') NOT NULL,
+    registration_date DATE NOT NULL,
+    membership_plan_id INT,
+    status ENUM('Active', 'Inactive', 'Expired') DEFAULT 'Active',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (membership_plan_id) REFERENCES membership_plans(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Payments Table
+CREATE TABLE IF NOT EXISTS payments (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    member_id INT NOT NULL,
+    membership_plan_id INT NOT NULL,
+    amount DECIMAL(10, 2) NOT NULL,
+    payment_date DATE NOT NULL,
+    payment_method ENUM('Cash', 'Card', 'Online', 'Other') DEFAULT 'Cash',
+    status ENUM('Paid', 'Pending', 'Failed') DEFAULT 'Paid',
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
+    FOREIGN KEY (membership_plan_id) REFERENCES membership_plans(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Attendance Table
+CREATE TABLE IF NOT EXISTS attendance (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    member_id INT NOT NULL,
+    check_in_time DATETIME NOT NULL,
+    check_out_time DATETIME NULL,
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Insert Sample Membership Plans
+INSERT INTO membership_plans (plan_name, duration_days, price, description) VALUES
+('Basic Plan', 30, 500.00, 'Monthly basic membership'),
+('Premium Plan', 30, 800.00, 'Monthly premium membership with all facilities'),
+('Annual Plan', 365, 8000.00, 'Yearly membership with 20% discount'),
+('Quarterly Plan', 90, 2000.00, '3 months membership');
+
+-- Admins Table
+CREATE TABLE IF NOT EXISTS admins (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    password VARCHAR(255) NOT NULL,
+    email VARCHAR(100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Extended member profile table to store fitness-related details
+CREATE TABLE IF NOT EXISTS member_profiles (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    member_id INT NOT NULL,
+    fitness_goals TEXT,
+    experience_level VARCHAR(50),
+    emergency_contact_name VARCHAR(150),
+    emergency_contact_phone VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+======================================================================================================
+
+
+db.php
+=======
+
+<?php
+// Database configuration - update these values to match your MySQL server
+define('DB_HOST', '127.0.0.1');
+define('DB_USER', 'root');
+define('DB_PASS', '');
+define('DB_NAME', 'gym_management');
+
+function db_connect(){
+    $mysqli = new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME);
+    if ($mysqli->connect_errno) {
+        die('DB connection failed: ' . $mysqli->connect_error);
+    }
+    $mysqli->set_charset('utf8mb4');
+    return $mysqli;
+}
+
+------------------------------------------------------------------------------------------------------
+
+
+food.php
+==========
+
+<?php
+// diet-plan.php
+// Simple PHP page – no database required
+?>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Weight Gain & Weight Loss Diet Plan</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<style>
+:root{
+  --bg-start:#0a0a0a;
+  --bg-end:#1a1a1a;
+  --panel:#000000;
+  --accent:#FFD700;
+  --muted:#d0d0d0;
+  --text:#ffffff;
+}
+
+*{margin:0;padding:0;box-sizing:border-box}
+
+body{
+  background:linear-gradient(135deg,var(--bg-start),var(--bg-end));
+  color:var(--text);
+  font-family:Arial,Helvetica,sans-serif;
+}
+
+header{
+  background:var(--panel);
+  padding:20px;
+  text-align:center;
+  border-bottom:2px solid var(--accent);
+}
+
+header h1{color:var(--accent)}
+
+.container{
+  max-width:1200px;
+  margin:auto;
+  padding:30px 20px;
+}
+
+.plan{
+  background:var(--panel);
+  border:1px solid var(--accent);
+  border-radius:8px;
+  padding:25px;
+  margin-bottom:30px;
+}
+
+.plan h2{
+  color:var(--accent);
+  margin-bottom:20px;
+}
+
+.grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  gap:20px;
+}
+
+.card{
+  background:#111;
+  border-radius:8px;
+  border:1px solid #333;
+  text-align:center;
+  padding:20px;
+}
+
+.icon{
+  font-size:50px;
+  margin-bottom:10px;
+}
+
+.card h3{
+  color:var(--accent);
+  margin-bottom:8px;
+}
+
+.card p{
+  color:var(--muted);
+  font-size:14px;
+  line-height:1.6;
+}
+
+.tip{
+  margin-top:20px;
+  padding:15px;
+  background:#111;
+  border-left:4px solid var(--accent);
+  color:var(--muted);
+}
+
+.rules{
+  background:var(--panel);
+  border:1px solid var(--accent);
+  border-radius:8px;
+  padding:20px;
+}
+
+.rules h2{
+  color:var(--accent);
+  margin-bottom:10px;
+}
+
+.rules ul{
+  margin-left:20px;
+  color:var(--muted);
+  line-height:1.8;
+}
+
+footer{
+  background:var(--panel);
+  text-align:center;
+  padding:15px;
+  color:var(--muted);
+  margin-top:40px;
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <h1>Healthy Diet Plans</h1>
+</header>
+
+<div class="container">
+
+<!-- WEIGHT GAIN -->
+<div class="plan">
+<h2>🔵 WEIGHT GAIN FOOD PLAN (Muscle + Healthy Weight)</h2>
+
+<div class="grid">
+  <div class="card">
+    <div class="icon">🍌🥛</div>
+    <h3>Morning</h3>
+    <p>Banana + Milk<br>5–10 Almonds / Peanuts</p>
+  </div>
+
+  <div class="card">
+    <div class="icon">🏋️‍♂️🥚</div>
+    <h3>Post-Workout</h3>
+    <p>Protein Shake / Milk<br>2 Boiled Eggs</p>
+  </div>
+
+  <div class="card">
+    <div class="icon">🍳</div>
+    <h3>Breakfast</h3>
+    <p>3 Egg Omelette / Paneer<br>2 Chapati / Oats</p>
+  </div>
+
+  <div class="card">
+    <div class="icon">🍚🍗</div>
+    <h3>Lunch</h3>
+    <p>Rice + Dal<br>Chicken / Fish / Paneer<br>Vegetables + Curd</p>
+  </div>
+
+  <div class="card">
+    <div class="icon">🥪🥜</div>
+    <h3>Evening</h3>
+    <p>Peanut Butter Sandwich / Banana<br>Dry Fruits</p>
+  </div>
+
+  <div class="card">
+    <div class="icon">🌙🥗</div>
+    <h3>Dinner</h3>
+    <p>2 Chapati<br>Eggs / Paneer / Fish<br>Vegetables</p>
+  </div>
+</div>
+
+<div class="tip">
+👉 Tip: Eat calorie-rich foods & focus on strength training
+</div>
+</div>
+
+<!-- WEIGHT LOSS -->
+<div class="plan">
+<h2>🔴 WEIGHT LOSS FOOD PLAN (Fat Loss)</h2>
+
+<div class="grid">
+  <div class="card">
+    <div class="icon">🍋💧</div>
+    <h3>Morning</h3>
+    <p>Warm Water + Lemon<br>5 Almonds</p>
+  </div>
+
+  <div class="card">
+    <div class="icon">🏃‍♂️🌱</div>
+    <h3>Post-Workout</h3>
+    <p>1 Boiled Egg OR Sprouts</p>
+  </div>
+
+  <div class="card">
+    <div class="icon">🥣🍎</div>
+    <h3>Breakfast</h3>
+    <p>Oats / Veg Omelette<br>1 Fruit</p>
+  </div>
+
+  <div class="card">
+    <div class="icon">🥗🍗</div>
+    <h3>Lunch</h3>
+    <p>2 Chapati / Small Rice<br>Dal / Grilled Chicken / Fish<br>Vegetables + Curd</p>
+  </div>
+
+  <div class="card">
+    <div class="icon">☕</div>
+    <h3>Evening</h3>
+    <p>Green Tea<br>Roasted Chana</p>
+  </div>
+
+  <div class="card">
+    <div class="icon">🌙🥣</div>
+    <h3>Dinner (Light)</h3>
+    <p>Vegetable Salad<br>Soup / Paneer / Eggs</p>
+  </div>
+</div>
+
+<div class="tip">
+👉 Tip: Avoid sugar, fried food & late-night eating
+</div>
+</div>
+
+<!-- COMMON RULES -->
+<div class="rules">
+<h2>💧 Common Rules</h2>
+<ul>
+  <li>Drink 2–3 liters of water daily</li>
+  <li>Sleep 7–8 hours</li>
+  <li>Avoid junk food & alcohol</li>
+</ul>
+</div>
+
+</div>
+
+<footer>
+© 2025 | BENNY FITNESS – Healthy Lifestyle Guide
+</footer>
+
+</body>
+</html>
+
+
+=========================================================================
+
+
+header.php
+============
+
+
+<?php
+if (session_status() !== PHP_SESSION_ACTIVE) {
+  session_start();
+}
+?>
+<header class="site-header">
+  <div class="container header-inner">
+    <a class="logo" href="index.php">
+      <img src="images/gym_logo.png" class="logo-img" alt="Benny Fitness Logo" style="height:52px">
+      <span class="brand">BENNY FITNESS</span>
+    </a>
+    <nav class="main-nav">
+      <a href="login.php">Login</a>
+      <a href="register.php">Member Registration</a>
+      <a href="attendance.php">Attendance</a>
+      <a href="members.php">Members</a>
+      <a href="contact.php">Contact</a>
+      <a href="food.php">Food</a>
+    </nav>
+  </div>
+</header>
+
+
+
+--------------------------------------------------------------------------
+
+
+index.php
+=============
+
+
+<?php
+session_start();
+// If user is logged in, show the home page.
+// If not logged in, redirect to login only on the first visit in this browser session.
+if (isset($_SESSION['user_logged_in']) && $_SESSION['user_logged_in'] === true) {
+  // logged in -> continue to show home
+} else {
+  if (empty($_SESSION['seen_in_session'])) {
+    // first visit in this session -> send to login
+    header('Location: login.php');
+    exit();
+  }
+}
+// mark that the visitor has seen the site in this session
+$_SESSION['seen_in_session'] = true;
+?>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BENNY FITNESS - Home</title>
+
+<style>
+:root {
+  --bg-start:#0a0a0a;
+  --bg-end:#1a1a1a;
+  --panel:#000000;
+  --accent:#FFD700;
+  --muted:#d0d0d0;
+  --text:#ffffff;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: "Segoe UI", Arial, sans-serif;
+}
+
+body {
+  background: radial-gradient(circle at top, var(--bg-end), var(--bg-start));
+  color: var(--text);
+}
+
+.container {
+  max-width: 1200px;
+  margin: auto;
+  padding: 20px;
+}
+
+/* HEADER */
+.site-header {
+  background: var(--panel);
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  position: sticky;
+  top: 0;
+}
+
+.header-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  text-decoration: none;
+}
+
+.logo-img {
+  height: 60px;
+}
+
+.brand {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.main-nav {
+  display: flex;
+  gap: 28px;
+}
+
+.main-nav a {
+  color: var(--text);
+  text-decoration: none;
+  font-size: 14px;
+  position: relative;
+}
+
+.main-nav a::after {
+  content: "";
+  position: absolute;
+  bottom: -6px;
+  left: 0;
+  width: 0;
+  height: 2px;
+  background: var(--accent);
+  transition: 0.3s;
+}
+
+.main-nav a:hover::after {
+  width: 100%;
+}
+
+/* HERO */
+.hero {
+  background: linear-gradient(180deg,#ffffff,#f3f3f3);
+  color: #111;
+  padding: 60px 40px;
+  border-radius: 18px;
+  margin-top: 40px;
+  text-align: center;
+}
+
+.hero h1 {
+  font-size: 38px;
+  margin-bottom: 15px;
+}
+
+.hero p {
+  max-width: 850px;
+  margin: auto;
+  color: #444;
+  font-size: 16px;
+}
+
+/* ✅ IMAGE GRID: 2 UP + 2 DOWN */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr); /* 2 x 2 layout */
+  gap: 30px;
+  margin: 50px 0;
+}
+
+.card {
+  background: #111;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+}
+
+.card img {
+  width: 100%;
+  height: 260px;
+  object-fit: cover;
+  display: block;
+}
+
+/* ABOUT */
+.about {
+  background: #ffffff;
+  color: #111;
+  padding: 50px 40px;
+  border-radius: 18px;
+  margin-bottom: 50px;
+}
+
+.about h2 {
+  font-size: 30px;
+  margin-bottom: 15px;
+}
+
+.about p {
+  color: #444;
+  line-height: 1.7;
+  margin-bottom: 25px;
+}
+
+.about ul {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(2,1fr);
+  gap: 15px;
+}
+
+.about ul li {
+  border-left: 4px solid var(--accent);
+  padding: 14px;
+  background: #f7f7f7;
+  border-radius: 8px;
+}
+
+/* FOOTER */
+footer {
+  background: var(--panel);
+  color: var(--muted);
+  text-align: center;
+  padding: 20px;
+}
+
+/* RESPONSIVE */
+@media (max-width: 700px) {
+  .card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .about ul {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
+</head>
+
+<body>
+
+<header class="site-header">
+  <div class="container header-inner">
+    <a class="logo" href="#">
+      <img src="images/gym_logo.png" class="logo-img" alt="Benny Fitness Logo">
+      <span class="brand">BENNY FITNESS</span>
+    </a>
+    <nav class="main-nav">
+      <a href="login.php">Login</a>
+      <a href="register.php">Member Registration</a>
+      <a href="attendance.php">Attendance</a>
+      <a href="members.php">Members</a>
+      <a href="contact.php">Contact</a>
+      <a href="food.php">Food</a>
+    </nav>
+  </div>
+</header>
+
+<main class="container">
+
+<section class="hero">
+  <h1>WELCOME TO BENNY FITNESS</h1>
+  <p>
+    BENNY FITNESS is a professional fitness center focused on strength,
+    transformation, and long-term health. Our facility combines premium
+    equipment, expert trainers, and a motivating environment.
+  </p>
+</section>
+
+<!-- ✅ 4 IMAGES: 2 UP / 2 DOWN -->
+<section class="card-grid">
+  <div class="card"><img src="images/gym1.jpg" alt="Gym Training"></div>
+  <div class="card"><img src="images/gym2.jpg" alt="Strength Workout"></div>
+  <div class="card"><img src="images/gym3.jpg" alt="Weight Training"></div>
+  <div class="card"><img src="images/gym4.jpg" alt="Gym Equipment"></div>
+</section>
+
+<section class="about">
+  <h2>About Our Gym</h2>
+  <p>
+    BENNY FITNESS follows professional training standards and modern fitness science.
+    Our programs are structured, monitored, and suitable for all fitness levels.
+  </p>
+
+  <ul>
+    <li>Certified professional trainers</li>
+    <li>Advanced strength & cardio equipment</li>
+    <li>Progress & attendance tracking</li>
+    <li>Clean, safe, disciplined environment</li>
+  </ul>
+</section>
+
+</main>
+
+<footer>
+  <small>&copy; <?php echo date('Y'); ?> BENNY FITNESS — All Rights Reserved</small>
+  <div style="margin-top:8px"><a href="reset_seen.php">Reset welcome (testing)</a></div>
+</footer>
+
+<script>
+// Send logout request when user leaves the page so homepage requires login again on return
+// Note: automatic logout on page exit was removed so the home page remains accessible
+// after logout or navigating back to Home.
+</script>
+
+</body>
+</html>
+
+==============================================================================================================
+
+
+login.php
+==============
+
+
+<?php
+session_start();
+
+// Mark that the visitor has seen the site in this browser session so
+// subsequent navigation to Home won't force the login while the browser is open.
+if (empty($_SESSION['seen_in_session'])) {
+    $_SESSION['seen_in_session'] = true;
+}
+
+$login_error = '';
+$register_error = '';
+$register_success = '';
+
+// Check if user is already logged in
+if (isset($_SESSION['user_logged_in']) && $_SESSION['user_logged_in'] === true) {
+    header("Location: index.php");
+    exit();
+}
+
+// Handle form submissions (login or register)
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = isset($_POST['action']) ? $_POST['action'] : 'login';
+
+    // path for storing registered users (simple JSON store)
+    $users_file = __DIR__ . '/users.json';
+    $users = [];
+    if (file_exists($users_file)) {
+        $raw = file_get_contents($users_file);
+        $decoded = json_decode($raw, true);
+        if (is_array($decoded)) {
+            $users = $decoded;
+        }
+    }
+
+    if ($action === 'register') {
+        $email = isset($_POST['reg_email']) ? trim($_POST['reg_email']) : '';
+        $password = isset($_POST['reg_password']) ? $_POST['reg_password'] : '';
+        $confirm = isset($_POST['reg_confirm']) ? $_POST['reg_confirm'] : '';
+
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $register_error = 'Please provide a valid email address.';
+        } elseif (strlen($password) < 4) {
+            $register_error = 'Password must be at least 4 characters.';
+        } elseif ($password !== $confirm) {
+            $register_error = 'Password and confirm password do not match.';
+        } else {
+            // check duplicate
+            $exists = false;
+            foreach ($users as $u) {
+                if (isset($u['email']) && strcasecmp($u['email'], $email) === 0) {
+                    $exists = true;
+                    break;
+                }
+            }
+            if ($exists) {
+                $register_error = 'An account with that email already exists.';
+            } else {
+                $hashed = password_hash($password, PASSWORD_DEFAULT);
+                $users[] = [
+                    'email' => $email,
+                    'password' => $hashed,
+                    'created_at' => date('c')
+                ];
+                // save
+                file_put_contents($users_file, json_encode($users, JSON_PRETTY_PRINT), LOCK_EX);
+                $register_success = 'Registration successful. You can now login.';
+            }
+        }
+    } else { // login
+        $email = isset($_POST['email']) ? trim($_POST['email']) : '';
+        $password = isset($_POST['password']) ? $_POST['password'] : '';
+
+        $authenticated = false;
+        // check registered users first
+        foreach ($users as $u) {
+            if (isset($u['email']) && strcasecmp($u['email'], $email) === 0) {
+                if (isset($u['password']) && password_verify($password, $u['password'])) {
+                    $authenticated = true;
+                }
+                break;
+            }
+        }
+
+        // fallback to demo hardcoded credentials
+        if (!$authenticated) {
+            $correct_email = 'benny@gmail.com';
+            $correct_password = 'benny';
+            if ($email === $correct_email && $password === $correct_password) {
+                $authenticated = true;
+            }
+        }
+
+        if ($authenticated) {
+            $_SESSION['user_logged_in'] = true;
+            $_SESSION['user_email'] = $email;
+            header("Location: index.php");
+            exit();
+        } else {
+            $login_error = 'Invalid email or password. Please try again.';
+        }
+    }
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Elite Fitness</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-header">
+            <div class="logo"></div>
+            <h1>Benny Fitness</h1>
+            <p>Gym Management System</p>
+        </div>
+
+        <?php if (!empty($login_error)): ?>
+            <div class="error-message show"><?php echo htmlspecialchars($login_error); ?></div>
+        <?php endif; ?>
+
+
+
+        <form method="POST" action="">
+            <input type="hidden" name="action" value="login">
+            <div class="form-group">
+                <label for="email">Email Address</label>
+                <input 
+                    type="email" 
+                    id="email" 
+                    name="email" 
+                    placeholder="Enter your email" 
+                    required
+                    value="<?php echo isset($_POST['email']) ? htmlspecialchars($_POST['email']) : ''; ?>"
+                >
+            </div>
+
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input 
+                    type="password" 
+                    id="password" 
+                    name="password" 
+                    placeholder="Enter your password" 
+                    required
+                >
+            </div>
+
+            <button type="submit" class="login-button">Login</button>
+        </form>
+        
+        <!-- Registration Section -->
+        <?php if (!empty($register_error)): ?>
+            <div class="error-message show"><?php echo htmlspecialchars($register_error); ?></div>
+        <?php endif; ?>
+
+        <?php if (!empty($register_success)): ?>
+            <div class="success-message show"><?php echo htmlspecialchars($register_success); ?></div>
+        <?php endif; ?>
+
+        <hr style="border:0;border-top:1px solid rgba(255,215,0,0.15);margin:25px 0;">
+
+        <details class="register-details">
+          <summary style="color:#FFD700;margin-bottom:15px;text-transform:uppercase;letter-spacing:1px;font-size:1em;cursor:pointer">Register</summary>
+
+          <form method="POST" action="register.php" style="margin-top:12px">
+              <div class="form-group">
+                  <label for="reg_email">Email Address</label>
+                  <input 
+                      type="email" 
+                      id="reg_email" 
+                      name="reg_email" 
+                      placeholder="Enter your email" 
+                      required
+                      value="<?php echo isset($_POST['reg_email']) ? htmlspecialchars($_POST['reg_email']) : ''; ?>"
+                  >
+              </div>
+
+              <div class="form-group">
+                  <label for="reg_password">Password</label>
+                  <input 
+                      type="password" 
+                      id="reg_password" 
+                      name="reg_password" 
+                      placeholder="Enter your password" 
+                      required
+                  >
+              </div>
+
+              <div class="form-group">
+                  <label for="reg_confirm">Confirm Password</label>
+                  <input 
+                      type="password" 
+                      id="reg_confirm" 
+                      name="reg_confirm" 
+                      placeholder="Confirm your password" 
+                      required
+                  >
+              </div>
+
+              <button type="submit" class="login-button">Register</button>
+          </form>
+        </details>
+
+        <div class="footer-text">
+            Welcome to Elite Fitness Gym Management System
+        </div>
+    </div>
+</body>
+</html>
+
+
+===============================================================================================================================
+
+logout.php
+------------------
+
+<?php
+// Logout endpoint intended to be called via navigator.sendBeacon or fetch(keepalive)
+session_start();
+// Do not destroy the entire session — keep the session-scoped "seen_in_session"
+// flag so that returning to Home during the same browser session does not
+// re-show the login page. Only unset the authentication markers.
+unset($_SESSION['user_logged_in']);
+unset($_SESSION['user_email']);
+
+header('Location: index.php');
+exit;
+
+
+------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+members.php
+================
+
+<?php
+session_start();
+require_once __DIR__ . '/db.php';
+
+$mysqli = db_connect();
+
+/* ===== DELETE MEMBER (SOFT DELETE) ===== */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete_member') {
+  $member_id = isset($_POST['member_id']) ? (int)$_POST['member_id'] : 0;
+  $success = false;
+
+  if ($member_id > 0) {
+    $stmt = $mysqli->prepare("UPDATE members SET status = 'Deleted' WHERE id = ?");
+    if ($stmt) {
+      $stmt->bind_param('i', $member_id);
+      $success = $stmt->execute();
+      $stmt->close();
+    }
+  }
+
+  $is_ajax = !empty($_SERVER['HTTP_X_REQUESTED_WITH']) &&
+             strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest';
+
+  if ($is_ajax) {
+    header('Content-Type: application/json');
+    echo json_encode(['success' => (bool)$success, 'member_id' => $member_id]);
+    exit();
+  }
+
+  header('Location: members.php');
+  exit();
+}
+
+/* ===== FETCH MEMBERS ===== */
+$sql = "SELECT m.id, m.first_name, m.last_name, m.email, m.phone,
+               m.registration_date, m.status,
+               p.plan_name, p.duration_days,
+               mp.fitness_goals, mp.experience_level
+        FROM members m
+        LEFT JOIN membership_plans p ON p.id = m.membership_plan_id
+        LEFT JOIN member_profiles mp ON mp.member_id = m.id
+        ORDER BY m.created_at DESC";
+
+$result = $mysqli->query($sql);
+?>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Members - BENNY FITNESS</title>
+<link rel="stylesheet" href="styles.css">
+
+<style>
+/* ===== PAGE WRAPPER ===== */
+.page-wrapper {
+  max-width: 1400px;
+  margin: 40px auto;
+  padding: 0 20px;
+}
+
+/* ===== CARD ===== */
+.card {
+  background: var(--panel);
+  border-radius: 18px;
+  padding: 30px;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.35);
+}
+
+/* ===== HEADINGS ===== */
+h1 {
+  margin-bottom: 20px;
+}
+
+/* ===== TABLE ===== */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.table thead th {
+  text-align: left;
+  padding: 14px 12px;
+  color: var(--muted);
+  font-weight: 600;
+  border-bottom: 2px solid rgba(255,255,255,0.1);
+  white-space: nowrap;
+}
+
+.table tbody td {
+  padding: 14px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  vertical-align: top;
+}
+
+.table tbody tr:hover {
+  background: rgba(255,255,255,0.03);
+}
+
+/* ===== STATUS ===== */
+.status {
+  font-weight: 600;
+}
+
+.status.Active {
+  color: #4caf50;
+}
+
+.status.Deleted {
+  color: #f44336;
+}
+
+/* ===== ACTIONS ===== */
+.actions {
+  white-space: nowrap;
+}
+
+.btn-small {
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+}
+
+/* ===== SMALL TEXT ===== */
+.small {
+  font-size: 0.9rem;
+  color: var(--muted);
+  margin-top: 10px;
+}
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 1100px) {
+  .table {
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 900px) {
+  .table thead {
+    display: none;
+  }
+
+  .table tr {
+    display: block;
+    margin-bottom: 20px;
+    border-bottom: 2px solid rgba(255,255,255,0.1);
+  }
+
+  .table td {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px;
+  }
+
+  .table td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: var(--muted);
+  }
+}
+</style>
+</head>
+
+<body>
+
+<div class="page-wrapper">
+  <div class="card">
+    <h1>Registered Members</h1>
+
+    <?php if (!$result || $result->num_rows === 0): ?>
+      <p class="small">No members found.</p>
+    <?php else: ?>
+      <table class="table" aria-label="Members list">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Phone</th>
+            <th>Plan</th>
+            <th>Start</th>
+            <th>End</th>
+            <th>Status</th>
+            <th>Goals / Level</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+        <?php while ($row = $result->fetch_assoc()):
+          $start = $row['registration_date'] ?: date('Y-m-d');
+          $end = 'N/A';
+          if (!empty($row['duration_days'])) {
+            $d = new DateTime($start);
+            $d->modify('+' . (int)$row['duration_days'] . ' days');
+            $end = $d->format('Y-m-d');
+          }
+        ?>
+          <tr>
+            <td data-label="ID"><?php echo (int)$row['id']; ?></td>
+            <td data-label="Name"><?php echo htmlspecialchars($row['first_name'].' '.$row['last_name']); ?></td>
+            <td data-label="Email"><?php echo htmlspecialchars($row['email']); ?></td>
+            <td data-label="Phone"><?php echo htmlspecialchars($row['phone']); ?></td>
+            <td data-label="Plan"><?php echo htmlspecialchars($row['plan_name'] ?? '-'); ?></td>
+            <td data-label="Start"><?php echo $start; ?></td>
+            <td data-label="End"><?php echo $end; ?></td>
+            <td data-label="Status">
+              <span class="status <?php echo htmlspecialchars($row['status']); ?>">
+                <?php echo htmlspecialchars($row['status']); ?>
+              </span>
+            </td>
+            <td data-label="Goals / Level">
+              <?php echo htmlspecialchars(($row['fitness_goals'] ?? '-') . ' / ' . ($row['experience_level'] ?? '-')); ?>
+            </td>
+            <td class="actions" data-label="Actions">
+              <form method="POST" onsubmit="return confirm('Delete this member?');">
+                <input type="hidden" name="action" value="delete_member">
+                <input type="hidden" name="member_id" value="<?php echo (int)$row['id']; ?>">
+                <button class="btn-small" style="background:#d32f2f;color:#fff">
+                  Delete
+                </button>
+              </form>
+            </td>
+          </tr>
+        <?php endwhile; ?>
+        </tbody>
+      </table>
+    <?php endif; ?>
+
+    <p class="small"><a href="index.php">← Back to Home</a></p>
+  </div>
+</div>
+
+<script>
+document.addEventListener('click', function(e){
+  const btn = e.target.closest('button');
+  if (!btn) return;
+
+  const form = btn.closest('form');
+  if (!form) return;
+
+  if (form.querySelector('input[name="action"]').value !== 'delete_member') return;
+
+  e.preventDefault();
+  if (!confirm('Delete this member?')) return;
+
+  const fd = new FormData(form);
+
+  fetch('members.php', {
+    method: 'POST',
+    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    body: fd
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (d.success) {
+      form.closest('tr').remove();
+    } else {
+      alert('Delete failed');
+    }
+  })
+  .catch(() => alert('Request failed'));
+});
+</script>
+
+</body>
+</html>
+
+
+======================================================================================================================================================
+
+
+
+register.php
+======================
+
+
+
+<?php
+require_once __DIR__ . '/db.php';
+
+$error = '';
+$success = '';
+
+$mysqli = db_connect();
+
+// Ensure member_profiles table exists (create minimal schema if missing)
+$create_profiles_sql = "CREATE TABLE IF NOT EXISTS member_profiles (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  member_id INT NOT NULL,
+  fitness_goals TEXT,
+  experience_level VARCHAR(50),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;";
+try {
+  $mysqli->query($create_profiles_sql);
+} catch (Exception $e) {
+  // ignore/create attempt failures - insertion will handle errors later
+}
+
+// Load membership plans for the select field
+$plans = [];
+$plan_res = $mysqli->query("SELECT id, plan_name FROM membership_plans ORDER BY id ASC");
+if ($plan_res) {
+    while ($row = $plan_res->fetch_assoc()) {
+        $plans[] = $row;
+    }
+    $plan_res->free();
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // basic sanitization
+    $first_name = trim($_POST['first_name'] ?? '');
+    $last_name = trim($_POST['last_name'] ?? '');
+    $email = trim($_POST['email'] ?? '');
+    $phone = trim($_POST['phone'] ?? '');
+    $address = trim($_POST['address'] ?? '');
+    $dob = trim($_POST['date_of_birth'] ?? null);
+    $gender = $_POST['gender'] ?? 'Other';
+    $membership_plan_id = !empty($_POST['membership_plan_id']) ? (int)$_POST['membership_plan_id'] : null;
+    $fitness_goals = trim($_POST['fitness_goals'] ?? '');
+    $experience_level = $_POST['experience_level'] ?? '';
+
+    if ($first_name === '' || $last_name === '' || $email === '' || $phone === '') {
+        $error = 'Please fill in all required fields (first name, last name, email, phone).';
+    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $error = 'Please provide a valid email address.';
+    } else {
+        // insert into members
+        $stmt = $mysqli->prepare("INSERT INTO members (first_name, last_name, email, phone, address, date_of_birth, gender, registration_date, membership_plan_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE(), ?, 'Active')");
+        if ($stmt) {
+            $stmt->bind_param('sssssssi', $first_name, $last_name, $email, $phone, $address, $dob, $gender, $membership_plan_id);
+            if ($stmt->execute()) {
+                $member_id = $stmt->insert_id;
+                $stmt->close();
+
+                // store extended profile info (without emergency contact fields)
+                $p = $mysqli->prepare("INSERT INTO member_profiles (member_id, fitness_goals, experience_level) VALUES (?, ?, ?)");
+                if ($p) {
+                  $p->bind_param('iss', $member_id, $fitness_goals, $experience_level);
+                  $p->execute();
+                  $p->close();
+                }
+
+                // Prepare registered member details to display
+                $registered_member = [
+                  'id' => $member_id,
+                  'first_name' => $first_name,
+                  'last_name' => $last_name,
+                  'phone' => $phone,
+                  'membership_plan_id' => $membership_plan_id
+                ];
+
+                // fetch plan details for start/end calculation
+                $plan_name = 'N/A';
+                $start_date = date('Y-m-d');
+                $end_date = null;
+                if (!empty($membership_plan_id)) {
+                  $q = $mysqli->prepare('SELECT plan_name, duration_days FROM membership_plans WHERE id = ? LIMIT 1');
+                  if ($q) {
+                    $q->bind_param('i', $membership_plan_id);
+                    $q->execute();
+                    $res = $q->get_result();
+                    if ($row = $res->fetch_assoc()) {
+                      $plan_name = $row['plan_name'];
+                      $duration = (int)$row['duration_days'];
+                      $dt = new DateTime($start_date);
+                      $dt->modify('+' . $duration . ' days');
+                      $end_date = $dt->format('Y-m-d');
+                    }
+                    $q->close();
+                  }
+                }
+
+                $success = 'Registration successful.';
+                // attach extra info for rendering below
+                $registered_member['plan_name'] = $plan_name;
+                $registered_member['start_date'] = $start_date;
+                $registered_member['end_date'] = $end_date;
+            } else {
+                $error = 'Failed to register member: ' . $stmt->error;
+                $stmt->close();
+            }
+        } else {
+            $error = 'Database error: ' . $mysqli->error;
+        }
+    }
+}
+
+?>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Member Registration - BENNY FITNESS</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .form-panel{max-width:760px;margin:30px auto;padding:20px;background:#0b0b0b;border:1px solid rgba(255,215,0,0.08);border-radius:12px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .full{grid-column:1/-1}
+    textarea{min-height:100px}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Member Registration</h1>
+
+    <?php if ($error): ?>
+      <div class="error-message show"><?php echo htmlspecialchars($error); ?></div>
+    <?php endif; ?>
+    <?php if ($success): ?>
+      <div class="success-message show"><?php echo htmlspecialchars($success); ?></div>
+    <?php endif; ?>
+
+    <?php if (!empty($registered_member)): ?>
+      <div class="panel" style="margin-top:16px;padding:16px;border-radius:8px;background:#081018;">
+        <h3 style="margin-top:0;color:var(--accent);">Registration Successful</h3>
+        <p><strong>Name:</strong> <?php echo htmlspecialchars($registered_member['first_name'] . ' ' . $registered_member['last_name']); ?></p>
+        <p><strong>Phone:</strong> <?php echo htmlspecialchars($registered_member['phone']); ?></p>
+        <p><strong>Plan:</strong> <?php echo htmlspecialchars($registered_member['plan_name']); ?></p>
+        <p><strong>Start Date:</strong> <?php echo htmlspecialchars($registered_member['start_date']); ?></p>
+        <p><strong>End Date:</strong> <?php echo htmlspecialchars($registered_member['end_date'] ?? 'N/A'); ?></p>
+      </div>
+    <?php endif; ?>
+
+    <div class="form-panel panel">
+      <form method="post" action="register.php">
+        <div class="grid">
+          <div>
+            <label for="first_name">First Name *</label>
+            <input type="text" id="first_name" name="first_name" required value="<?php echo isset($_POST['first_name'])?htmlspecialchars($_POST['first_name']):''; ?>">
+          </div>
+          <div>
+            <label for="last_name">Last Name *</label>
+            <input type="text" id="last_name" name="last_name" required value="<?php echo isset($_POST['last_name'])?htmlspecialchars($_POST['last_name']):''; ?>">
+          </div>
+
+          <div>
+            <label for="email">Email *</label>
+            <input type="email" id="email" name="email" required value="<?php echo isset($_POST['email'])?htmlspecialchars($_POST['email']):''; ?>">
+          </div>
+          <div>
+            <label for="phone">Phone *</label>
+            <input type="text" id="phone" name="phone" required value="<?php echo isset($_POST['phone'])?htmlspecialchars($_POST['phone']):''; ?>">
+          </div>
+
+          <div>
+            <label for="date_of_birth">Date of Birth</label>
+            <input type="date" id="date_of_birth" name="date_of_birth" value="<?php echo isset($_POST['date_of_birth'])?htmlspecialchars($_POST['date_of_birth']):''; ?>">
+          </div>
+          <div>
+            <label for="gender">Gender</label>
+            <select id="gender" name="gender">
+              <option value="Male" <?php if(isset($_POST['gender'])&&$_POST['gender']==='Male') echo 'selected'; ?>>Male</option>
+              <option value="Female" <?php if(isset($_POST['gender'])&&$_POST['gender']==='Female') echo 'selected'; ?>>Female</option>
+              <option value="Other" <?php if(isset($_POST['gender'])&&$_POST['gender']==='Other') echo 'selected'; ?>>Other</option>
+            </select>
+          </div>
+
+          <div class="full">
+            <label for="address">Address</label>
+            <textarea id="address" name="address"><?php echo isset($_POST['address'])?htmlspecialchars($_POST['address']):''; ?></textarea>
+          </div>
+
+          <div>
+            <label for="membership_plan_id">Membership Plan</label>
+            <select id="membership_plan_id" name="membership_plan_id">
+              <option value="">-- Select Plan --</option>
+              <?php foreach($plans as $pl): ?>
+                <option value="<?php echo (int)$pl['id']; ?>" <?php if(isset($_POST['membership_plan_id'])&&$_POST['membership_plan_id']==$pl['id']) echo 'selected'; ?>><?php echo htmlspecialchars($pl['plan_name']); ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+
+          <div>
+            <label for="experience_level">Experience Level</label>
+            <select id="experience_level" name="experience_level">
+              <option value="Beginner">Beginner</option>
+              <option value="Intermediate">Intermediate</option>
+              <option value="Advanced">Advanced</option>
+            </select>
+          </div>
+
+          <div class="full">
+            <label for="fitness_goals">Fitness Goals (short)</label>
+            <textarea id="fitness_goals" name="fitness_goals"><?php echo isset($_POST['fitness_goals'])?htmlspecialchars($_POST['fitness_goals']):''; ?></textarea>
+          </div>
+          <!-- Emergency contact fields removed -->
+        </div>
+
+        <div style="margin-top:18px">
+          <button class="login-button" type="submit">Register Member</button>
+          <a style="margin-left:12px;color:var(--muted)" href="index.php">Back to Home</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</body>
+</html>
+
+
+
+
+==================================================================================================================================================================================
+
+
+
+
+reset_seen.php
+====================
+
+
+
+<?php
+session_start();
+// Clear the session-scoped seen flag so the login page will be shown again on next visit
+if (isset($_SESSION['seen_in_session'])) {
+    unset($_SESSION['seen_in_session']);
+}
+header('Location: index.php');
+exit();
+
+
+=================================================================================================================================================================
+
+
+styles.css
+===========
+
+/* Theme tokens */
+:root{
+  --bg-start:#0a0a0a;
+  --bg-end:#1a1a1a;
+  --panel:#000000;
+  --accent:#FFD700;
+  --muted:#d0d0d0;
+  --text:#ffffff;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background:linear-gradient(135deg,var(--bg-start) 0%,var(--bg-end) 100%);
+  color:var(--text);
+  min-height:100vh;
+}
+
+/* Global container with min/max widths to keep layout readable */
+.container{max-width:1000px;min-width:320px;margin:0 auto;padding:1rem}
+
+/* Header / nav */
+.site-header{background:transparent;padding:1rem 0}
+.header-inner{display:flex;align-items:center;justify-content:space-between;gap:1rem}
+.logo{display:flex;align-items:center;gap:.6rem;text-decoration:none;color:var(--text)}
+.logo svg{display:block}
+.logo .brand{font-weight:700;font-size:1.05rem}
+.main-nav a{margin-left:1rem;text-decoration:none;color:var(--muted);font-weight:600}
+.main-nav a:hover{color:var(--accent)}
+
+/* Hero */
+.hero{padding:2rem 0}
+.hero h1{margin:.2rem 0;font-size:2rem;color:var(--accent);text-transform:uppercase;letter-spacing:1px}
+.lead{color:var(--muted);margin-top:.5rem}
+.hero-img{width:100%;max-width:100%;height:auto;display:block;border-radius:8px;object-fit:cover;max-height:420px;min-height:180px}
+
+/* Panels */
+.panel{background:var(--panel);border:2px solid rgba(255,215,0,0.08);padding:1rem;border-radius:10px}
+
+.about{background:transparent;padding:1rem;margin:1rem 0}
+.about .thumbs{display:flex;gap:1rem;flex-wrap:wrap;margin-top:0.5rem}
+.thumbs img{width:180px;max-width:30%;min-width:120px;height:auto;border-radius:8px;border:1px solid rgba(255,255,255,0.06)}
+
+.site-footer{padding:1rem 0;text-align:center;color:var(--muted)}
+
+/* Login/register styles copied/adapted from original login.php */
+.login-container{width:100%;max-width:450px;padding:30px;background:var(--panel);border:2px solid var(--accent);border-radius:10px;box-shadow:0 10px 40px rgba(255,215,0,0.06);margin:2rem auto}
+.login-header{text-align:center;margin-bottom:20px}
+.login-header .logo{font-size:3em;margin-bottom:8px}
+.login-header h1{color:var(--accent);font-size:1.6em;margin-bottom:8px;text-transform:uppercase;letter-spacing:2px}
+.login-header p{color:var(--muted);font-size:0.95em}
+.form-group{margin-bottom:18px}
+label{display:block;color:var(--accent);font-weight:600;margin-bottom:8px;font-size:0.95em}
+input[type="email"],input[type="password"],input[type="text"],textarea{width:100%;padding:10px 12px;background:#1a1a1a;border:1px solid var(--accent);border-radius:6px;color:var(--text);font-size:1em}
+input::placeholder{color:#808080}
+input:focus{outline:none;background:#2a2a2a;border-color:#FFC700}
+.error-message{background:#d32f2f;color:#ffffff;padding:12px;border-radius:6px;margin-bottom:16px;display:none}
+.success-message{background:#2e7d32;color:#ffffff;padding:12px;border-radius:6px;margin-bottom:16px;display:none}
+.error-message.show,.success-message.show{display:block}
+.login-button{width:100%;padding:12px 16px;background:var(--accent);color:#000;border:none;border-radius:6px;font-size:1.05em;font-weight:700;cursor:pointer;text-transform:uppercase}
+.login-button:active{background:#FFC700}
+.footer-text{text-align:center;color:var(--muted);margin-top:16px;font-size:0.9em}
+.footer-text a{color:var(--accent);text-decoration:none}
+.info-box{background:rgba(255,215,0,0.06);border:1px solid var(--accent);padding:12px;border-radius:6px;margin-bottom:16px;font-size:0.95em}
+.info-box strong{color:var(--accent)}
+
+@media (max-width:640px){
+  .header-inner{flex-direction:column;align-items:flex-start}
+  .main-nav a{margin-left:0;margin-right:.5rem}
+  .thumbs img{max-width:48%;min-width:120px}
+  .login-container{margin:20px;padding:20px}
+}
+
+/* Contact page enhancements */
+.contact-hero{max-width:1200px;margin:40px auto;background:linear-gradient(135deg,#ffffff,#f7f7f7);border-radius:18px;overflow:hidden;box-shadow:0 24px 48px rgba(0,0,0,0.35)}
+.contact-hero img{width:100%;height:320px;object-fit:cover}
+.contact-hero-content{padding:36px;color:#111}
+.contact-info{max-width:1200px;margin:30px auto;display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
+.info-card{background:#fff;padding:22px;border-radius:12px;color:#111;box-shadow:0 12px 30px rgba(0,0,0,0.18)}
+
+@media (max-width:900px){
+  .contact-info{grid-template-columns:repeat(2,1fr)}
+}
+
+@media (max-width:600px){
+  .contact-info{grid-template-columns:1fr}
+  .contact-hero-content{padding:22px}
+}
+
+
+
+
+
+
+================================================================================================================================================================================
+
+
+user.json
+================
+
+[
+    {
+        "email": "arjun@gmail.com",
+        "password": "$2y$10$Z3GOd7xSTk0Qe0XVI7haouT0RPBXbK1YYz9RyXj1PnR7OND33hgx6",
+        "created_at": "2025-12-04T07:43:08+01:00"
+    }
+]
+
+
+=================================================================================================================================================
